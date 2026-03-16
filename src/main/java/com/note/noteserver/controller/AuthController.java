@@ -1,7 +1,6 @@
 package com.note.noteserver.controller;
 
 import com.note.noteserver.dto.*;
-import com.note.noteserver.exception.UnauthorizedException;
 import com.note.noteserver.service.AuthService;
 import com.note.noteserver.util.JwtUtil;
 import jakarta.validation.Valid;
@@ -92,11 +91,11 @@ public class AuthController {
      */
     private String extractUserId(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new UnauthorizedException("无效的授权头");
+            throw new RuntimeException("无效的授权头");
         }
         String token = authHeader.substring(7);
         if (!jwtUtil.validateToken(token)) {
-            throw new UnauthorizedException("令牌无效或已过期");
+            throw new RuntimeException("令牌无效或已过期");
         }
         return jwtUtil.extractUserId(token);
     }
