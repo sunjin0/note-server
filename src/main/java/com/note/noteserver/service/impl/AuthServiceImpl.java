@@ -3,6 +3,7 @@ package com.note.noteserver.service.impl;
 import com.note.noteserver.dto.*;
 import com.note.noteserver.entity.RefreshToken;
 import com.note.noteserver.entity.User;
+import com.note.noteserver.exception.I18nException;
 import com.note.noteserver.mapper.RefreshTokenMapper;
 import com.note.noteserver.mapper.UserMapper;
 import com.note.noteserver.service.AuthService;
@@ -40,13 +41,13 @@ public class AuthServiceImpl implements AuthService {
         // 检查用户名是否已存在
         User existingUser = userMapper.findByUsername(request.getUsername());
         if (existingUser != null) {
-            throw new RuntimeException("用户名已存在");
+            throw new I18nException("error.user.username.exists");
         }
         
         // 检查邮箱是否已存在
         User existingEmail = userMapper.findByEmail(request.getEmail());
         if (existingEmail != null) {
-            throw new RuntimeException("邮箱已存在");
+            throw new I18nException("error.user.email.exists");
         }
         // 创建用户
         User user = new User();
@@ -76,17 +77,17 @@ public class AuthServiceImpl implements AuthService {
         }
         
         if (user == null) {
-            throw new RuntimeException("用户不存在");
+            throw new I18nException("error.user.not.found");
         }
         
         // 验证密码
         if (!passwordUtil.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("密码错误");
+            throw new I18nException("error.user.invalid.credentials");
         }
         
         // 检查用户是否激活
         if (!Boolean.TRUE.equals(user.getIsActive())) {
-            throw new RuntimeException("账户已被禁用");
+            throw new I18nException("error.user.disabled");
         }
         
         // 更新最后登录时间
@@ -120,12 +121,12 @@ public class AuthServiceImpl implements AuthService {
         
         // 验证 Refresh Token
         if (!jwtUtil.validateToken(token)) {
-            throw new RuntimeException("无效的刷新令牌");
+            throw new I18nException("error.auth.invalid.refresh.token");
         }
         
         // 验证是否为 Refresh Token
         if (!jwtUtil.isRefreshToken(token)) {
-            throw new RuntimeException("无效的令牌类型");
+            throw new I18nException("error.auth.invalid.token.type");
         }
         
         // 提取用户ID
@@ -134,18 +135,18 @@ public class AuthServiceImpl implements AuthService {
         // 查找数据库中的令牌
         RefreshToken refreshToken = refreshTokenMapper.findByTokenHash(token);
         if (refreshToken == null || Boolean.TRUE.equals(refreshToken.getIsRevoked())) {
-            throw new RuntimeException("刷新令牌已被吊销");
+            throw new I18nException("error.auth.refresh.token.revoked");
         }
         
         // 检查是否过期
         if (refreshToken.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("刷新令牌已过期");
+            throw new I18nException("error.auth.refresh.token.expired");
         }
         
         // 获取用户信息
         User user = userMapper.selectById(userId);
         if (user == null || !Boolean.TRUE.equals(user.getIsActive())) {
-            throw new RuntimeException("用户不存在或已被禁用");
+            throw new I18nException("error.user.not.found");
         }
         
         // 吊销旧令牌
@@ -161,7 +162,7 @@ public class AuthServiceImpl implements AuthService {
     public UserDto getCurrentUser(String userId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new RuntimeException("用户不存在");
+            throw new I18nException("error.user.not.found");
         }
         return convertToUserDto(user);
     }
@@ -171,12 +172,12 @@ public class AuthServiceImpl implements AuthService {
     public void changePassword(String userId, ChangePasswordRequest request) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new RuntimeException("用户不存在");
+            throw new I18nException("error.user.not.found");
         }
         
         // 验证当前密码
         if (!passwordUtil.matches(request.getCurrentPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("当前密码错误");
+            throw new I18nException("error.user.current.password.wrong");
         }
         
         // 加密新密码
@@ -186,7 +187,7 @@ public class AuthServiceImpl implements AuthService {
         // 吊销所有刷新令牌（强制重新登录）
         logout(userId);
         
-        log.info("用户 {} 修改密码成功", userId);
+        log.info("User {} changed password successfully", userId);
     }
 
     /**

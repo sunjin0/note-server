@@ -9,10 +9,10 @@ import lombok.Data;
 @Data
 public class ResolveConflictRequest {
 
-    @NotBlank(message = "条目ID不能为空")
+    @NotBlank(message = "{validation.entry.id.required}")
     private String entryId;
 
-    @NotBlank(message = "解决方式不能为空")
+    @NotBlank(message = "{validation.resolution.required}")
     private String resolution;
 
     private SyncRequest.MoodEntryDto mergedEntry;

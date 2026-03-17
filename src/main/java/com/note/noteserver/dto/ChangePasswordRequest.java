@@ -10,10 +10,10 @@ import lombok.Data;
 @Data
 public class ChangePasswordRequest {
 
-    @NotBlank(message = "当前密码不能为空")
+    @NotBlank(message = "{validation.current.password.required}")
     private String currentPassword;
 
-    @NotBlank(message = "新密码不能为空")
-    @Size(min = 6, message = "新密码至少需要6个字符")
+    @NotBlank(message = "{validation.new.password.required}")
+    @Size(min = 6, message = "{validation.new.password.size}")
     private String newPassword;
 }

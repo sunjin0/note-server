@@ -3,6 +3,7 @@ package com.note.noteserver.controller;
 import com.note.noteserver.dto.*;
 import com.note.noteserver.exception.UnauthorizedException;
 import com.note.noteserver.service.SyncService;
+import com.note.noteserver.util.I18nMessageUtil;
 import com.note.noteserver.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -54,7 +55,7 @@ public class SyncController {
             @Valid @RequestBody ResolveConflictRequest request) {
         String userId = extractUserId(authHeader);
         syncService.resolveConflict(userId, request);
-        return ResponseEntity.ok(ApiResponse.success(Map.of("message", "冲突已解决")));
+        return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.conflict.resolved"))));
     }
 
     /**
@@ -62,11 +63,11 @@ public class SyncController {
      */
     private String extractUserId(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new UnauthorizedException("无效的授权头");
+            throw new UnauthorizedException(I18nMessageUtil.getMessage("error.auth.invalid.auth.header"));
         }
         String token = authHeader.substring(7);
         if (!jwtUtil.validateToken(token)) {
-            throw new UnauthorizedException("令牌无效或已过期");
+            throw new UnauthorizedException(I18nMessageUtil.getMessage("error.auth.invalid.token"));
         }
         return jwtUtil.extractUserId(token);
     }

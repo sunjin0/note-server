@@ -2,6 +2,7 @@ package com.note.noteserver.controller;
 
 import com.note.noteserver.dto.*;
 import com.note.noteserver.service.AuthService;
+import com.note.noteserver.util.I18nMessageUtil;
 import com.note.noteserver.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -51,7 +52,7 @@ public class AuthController {
             @RequestHeader("Authorization") String authHeader) {
         String userId = extractUserId(authHeader);
         authService.logout(userId);
-        return ResponseEntity.ok(ApiResponse.success(Map.of("message", "登出成功")));
+        return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.logout"))));
     }
 
     /**
@@ -83,7 +84,7 @@ public class AuthController {
             @Valid @RequestBody ChangePasswordRequest request) {
         String userId = extractUserId(authHeader);
         authService.changePassword(userId, request);
-        return ResponseEntity.ok(ApiResponse.success(Map.of("message", "密码修改成功")));
+        return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.password.changed"))));
     }
 
     /**
@@ -91,11 +92,11 @@ public class AuthController {
      */
     private String extractUserId(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new RuntimeException("无效的授权头");
+            throw new RuntimeException(I18nMessageUtil.getMessage("error.auth.invalid.auth.header"));
         }
         String token = authHeader.substring(7);
         if (!jwtUtil.validateToken(token)) {
-            throw new RuntimeException("令牌无效或已过期");
+            throw new RuntimeException(I18nMessageUtil.getMessage("error.auth.invalid.token"));
         }
         return jwtUtil.extractUserId(token);
     }

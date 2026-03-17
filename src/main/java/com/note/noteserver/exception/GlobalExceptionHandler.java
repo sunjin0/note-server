@@ -1,6 +1,7 @@
 package com.note.noteserver.exception;
 
 import com.note.noteserver.dto.ApiResponse;
+import com.note.noteserver.util.I18nMessageUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +15,7 @@ import java.util.Map;
 
 /**
  * 全局异常处理器
+ * 支持国际化消息
  */
 @Slf4j
 @RestControllerAdvice
@@ -32,8 +34,19 @@ public class GlobalExceptionHandler {
         });
 
         log.warn("参数校验失败: {}", fieldErrors);
+        String message = I18nMessageUtil.getMessage("error.validation.failed");
         return ResponseEntity.badRequest()
-                .body(ApiResponse.error("VALIDATION_ERROR", "请求数据验证失败", fieldErrors));
+                .body(ApiResponse.error("VALIDATION_ERROR", message, fieldErrors));
+    }
+
+    /**
+     * 处理国际化业务异常（400）
+     */
+    @ExceptionHandler(I18nException.class)
+    public ResponseEntity<ApiResponse<Void>> handleI18nException(I18nException ex) {
+        log.warn("国际化业务异常: {}", ex.getLocalizedMessage());
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error("BUSINESS_ERROR", ex.getLocalizedMessage()));
     }
 
     /**
@@ -42,8 +55,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({UnauthorizedException.class})
     public ResponseEntity<ApiResponse<Void>> handleUnauthorizedException(RuntimeException ex) {
         log.warn("认证失败: {}", ex.getMessage());
+        String message = ex.getMessage();
+        if (message == null || message.isEmpty()) {
+            message = I18nMessageUtil.getMessage("error.unauthorized");
+        }
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(ApiResponse.error("UNAUTHORIZED", ex.getMessage()));
+                .body(ApiResponse.error("UNAUTHORIZED", message));
     }
 
     /**
@@ -62,7 +79,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleException(Exception ex) {
         log.error("系统异常: ", ex);
+        String message = I18nMessageUtil.getMessage("error.server.internal");
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error("SERVER_ERROR", "服务器内部错误"));
+                .body(ApiResponse.error("SERVER_ERROR", message));
     }
 }

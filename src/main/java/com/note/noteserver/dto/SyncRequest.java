@@ -13,12 +13,12 @@ import java.util.List;
 @Data
 public class SyncRequest {
 
-    @NotBlank(message = "设备ID不能为空")
+    @NotBlank(message = "{validation.device.id.required}")
     private String deviceId;
 
     private LocalDateTime lastSyncAt;
 
-    @NotNull(message = "同步数据不能为空")
+    @NotNull(message = "{validation.sync.data.required}")
     private SyncData data;
 
     private List<String> deletedIds;

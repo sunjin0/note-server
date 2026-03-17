@@ -9,10 +9,10 @@ import lombok.Data;
 @Data
 public class LoginRequest {
 
-    @NotBlank(message = "邮箱或用户名不能为空")
+    @NotBlank(message = "{validation.identifier.required}")
     private String identifier;
 
-    @NotBlank(message = "密码不能为空")
+    @NotBlank(message = "{validation.password.required}")
     private String password;
 
     private Boolean rememberMe = false;

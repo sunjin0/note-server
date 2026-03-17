@@ -9,7 +9,7 @@ import lombok.Data;
 @Data
 public class UpdateProfileRequest {
 
-    @Size(max = 50, message = "昵称长度不能超过50字符")
+    @Size(max = 50, message = "{validation.nickname.size}")
     private String nickname;
 
     private String avatar;

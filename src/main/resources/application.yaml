@@ -4,6 +4,12 @@ spring:
   docker:
     compose:
       enabled: false
+  messages:
+    basename: i18n/messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+    default-locale: zh_CN
+    cache-duration: 3600s
   datasource:
     url: jdbc:mysql://192.168.1.121:3306/note?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
     username: root
