@@ -3,7 +3,6 @@ package com.note.noteserver.controller;
 import com.note.noteserver.dto.*;
 import com.note.noteserver.service.AuthService;
 import com.note.noteserver.util.I18nMessageUtil;
-import com.note.noteserver.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,7 +22,6 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
-    private final JwtUtil jwtUtil;
 
     /**
      * 用户注册
@@ -49,8 +47,7 @@ public class AuthController {
      */
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<Map<String, String>>> logout(
-            @RequestHeader("Authorization") String authHeader) {
-        String userId = extractUserId(authHeader);
+            @RequestAttribute("userId") String userId) {
         authService.logout(userId);
         return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.logout"))));
     }
@@ -69,8 +66,7 @@ public class AuthController {
      */
     @GetMapping("/me")
     public ResponseEntity<ApiResponse<UserDto>> getCurrentUser(
-            @RequestHeader("Authorization") String authHeader) {
-        String userId = extractUserId(authHeader);
+            @RequestAttribute("userId") String userId) {
         UserDto user = authService.getCurrentUser(userId);
         return ResponseEntity.ok(ApiResponse.success(user));
     }
@@ -80,24 +76,9 @@ public class AuthController {
      */
     @PostMapping("/change-password")
     public ResponseEntity<ApiResponse<Map<String, String>>> changePassword(
-            @RequestHeader("Authorization") String authHeader,
+            @RequestAttribute("userId") String userId,
             @Valid @RequestBody ChangePasswordRequest request) {
-        String userId = extractUserId(authHeader);
         authService.changePassword(userId, request);
         return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.password.changed"))));
-    }
-
-    /**
-     * 从 Authorization Header 中提取用户ID
-     */
-    private String extractUserId(String authHeader) {
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new RuntimeException(I18nMessageUtil.getMessage("error.auth.invalid.auth.header"));
-        }
-        String token = authHeader.substring(7);
-        if (!jwtUtil.validateToken(token)) {
-            throw new RuntimeException(I18nMessageUtil.getMessage("error.auth.invalid.token"));
-        }
-        return jwtUtil.extractUserId(token);
     }
 }

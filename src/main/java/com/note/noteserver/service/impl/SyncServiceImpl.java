@@ -1,536 +1,386 @@
 package com.note.noteserver.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.note.noteserver.dto.*;
-import com.note.noteserver.entity.*;
-import com.note.noteserver.exception.I18nException;
-import com.note.noteserver.mapper.*;
+import com.note.noteserver.dto.ResolveConflictRequest;
+import com.note.noteserver.dto.SyncRequest;
+import com.note.noteserver.dto.SyncResponse;
+import com.note.noteserver.dto.SyncStatusResponse;
+import com.note.noteserver.entity.MoodEntry;
+import com.note.noteserver.entity.SyncStatus;
+import com.note.noteserver.mapper.MoodEntryMapper;
+import com.note.noteserver.mapper.SyncStatusMapper;
 import com.note.noteserver.service.SyncService;
-import com.note.noteserver.util.JsonUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 数据同步服务实现类
+ * 数据同步服务实现类 - 以 SYNC_DESIGN.md 为准
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SyncServiceImpl implements SyncService {
 
+    private static final Duration CONFLICT_WINDOW = Duration.ofMinutes(5);
+
     private final MoodEntryMapper moodEntryMapper;
-    private final FactorOptionMapper factorOptionMapper;
-    private final JournalTemplateMapper journalTemplateMapper;
-    private final UserSettingMapper userSettingMapper;
     private final SyncStatusMapper syncStatusMapper;
-    private final EntryFactorMapper entryFactorMapper;
-    private final SecuritySettingMapper securitySettingMapper;
 
     @Override
     @Transactional
     public SyncResponse sync(String userId, SyncRequest request) {
-        log.info("执行数据同步, 用户: {}, 设备: {}", userId, request.getDeviceId());
-        
-        LocalDateTime serverTimestamp = LocalDateTime.now();
+        LocalDateTime serverTime = LocalDateTime.now();
         LocalDateTime lastSyncAt = request.getLastSyncAt();
-        
-        // 1. 处理客户端上传的数据
-        processClientData(userId, request.getData(), request.getDeletedIds());
-        
-        // 2. 获取服务器端更新的数据
-        SyncResponse.SyncResponseBuilder responseBuilder = SyncResponse.builder()
-                .serverTimestamp(serverTimestamp);
-        
-        // 获取更新的日记条目
+
+        ApplyResult apply = applyClientChanges(userId, request, lastSyncAt);
+
         List<SyncRequest.MoodEntryDto> serverEntries = getServerEntries(userId, lastSyncAt);
-        responseBuilder.entries(serverEntries);
-        
-        // 获取用户设置
-        SyncRequest.UserSettingsDto serverSettings = getServerSettings(userId);
-        responseBuilder.settings(serverSettings);
-        
-        // 获取自定义因素
-        List<SyncRequest.FactorOptionDto> serverFactors = getServerFactors(userId, lastSyncAt);
-        responseBuilder.customFactors(serverFactors);
-        
-        // 获取自定义模板
-        List<SyncRequest.JournalTemplateDto> serverTemplates = getServerTemplates(userId, lastSyncAt);
-        responseBuilder.customTemplates(serverTemplates);
+        List<SyncRequest.DeleteDto> serverDeletes = getServerDeletes(userId, lastSyncAt);
 
-        // 获取安全设置
-        SyncRequest.SecuritySettingsDto serverSecurity = getServerSecurity(userId);
-        responseBuilder.securitySettings(serverSecurity);
-        
-        // 3. 检测冲突
-        List<SyncResponse.ConflictInfo> conflicts = detectConflicts(userId, request.getData(), lastSyncAt);
-        responseBuilder.conflicts(conflicts);
-        
-        // 4. 更新同步状态
-        updateSyncStatus(userId, request.getDeviceId(), serverTimestamp);
-        
-        return responseBuilder.build();
-    }
+        updateSyncStatus(userId, request.getDeviceId(), serverTime);
 
-    @Override
-    public SyncStatusResponse getSyncStatus(String userId) {
-        log.info("获取同步状态, 用户: {}", userId);
-        
-        LambdaQueryWrapper<SyncStatus> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SyncStatus::getUserId, userId)
-               .eq(SyncStatus::getIsActive, true)
-               .orderByDesc(SyncStatus::getLastSyncAt)
-               .last("LIMIT 1");
-        
-        SyncStatus syncStatus = syncStatusMapper.selectOne(wrapper);
-        
-        if (syncStatus == null) {
-            return SyncStatusResponse.builder()
-                    .lastSyncAt(null)
-                    .pendingChanges(0)
-                    .build();
-        }
-        
-        return SyncStatusResponse.builder()
-                .lastSyncAt(syncStatus.getLastSyncAt())
-                .pendingChanges(syncStatus.getPendingChanges())
+        return SyncResponse.builder()
+                .serverTime(serverTime)
+                .entries(serverEntries)
+                .deletes(serverDeletes)
+                .conflicts(apply.conflicts)
+                .stats(SyncResponse.Stats.builder()
+                        .uploaded(apply.uploaded)
+                        .downloaded((serverEntries != null ? serverEntries.size() : 0) + (serverDeletes != null ? serverDeletes.size() : 0))
+                        .deleted(apply.deleted)
+                        .conflicts(apply.conflicts.size())
+                        .build())
                 .build();
     }
 
     @Override
+    public SyncStatusResponse getSyncStatus(String userId) {
+        LambdaQueryWrapper<SyncStatus> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SyncStatus::getUserId, userId)
+                .eq(SyncStatus::getIsActive, true)
+                .orderByDesc(SyncStatus::getLastSyncAt)
+                .last("LIMIT 1");
+
+        SyncStatus syncStatus = syncStatusMapper.selectOne(wrapper);
+        if (syncStatus == null) {
+            return new SyncStatusResponse(null, 0);
+        }
+        return new SyncStatusResponse(syncStatus.getLastSyncAt(), syncStatus.getPendingChanges());
+    }
+
+    @Override
     @Transactional
-    public void resolveConflict(String userId, ResolveConflictRequest request) {
-        log.info("解决同步冲突, 用户: {}, 条目: {}, 方式: {}", 
-                userId, request.getEntryId(), request.getResolution());
-        
-        String entryId = request.getEntryId();
+    public void resolveConflict(String userId, String entryId, ResolveConflictRequest request) {
+        MoodEntry server = moodEntryMapper.selectById(entryId);
+        if (server == null || !userId.equals(server.getUserId())) {
+            throw new RuntimeException("entry not found");
+        }
+
         String resolution = request.getResolution();
-        
-        MoodEntry entry = moodEntryMapper.selectById(entryId);
-        if (entry == null || !entry.getUserId().equals(userId)) {
-            throw new I18nException("error.sync.entry.not.found");
-        }
-        
-        switch (resolution) {
-            case "server":
-                // 保留服务器版本，无需操作
-                log.info("冲突解决: 保留服务器版本, 条目: {}", entryId);
-                break;
-            case "client":
-                // 保留客户端版本（已在 sync 中处理）
-                log.info("冲突解决: 保留客户端版本, 条目: {}", entryId);
-                break;
-            case "merged":
-                // 使用合并后的版本
-                if (request.getMergedEntry() == null) {
-                    throw new I18nException("error.sync.merged.entry.empty");
-                }
-                updateEntryFromDto(entry, request.getMergedEntry());
-                entry.setUpdatedAt(LocalDateTime.now());
-                moodEntryMapper.updateById(entry);
-                log.info("冲突解决: 使用合并版本, 条目: {}", entryId);
-                break;
-            default:
-                throw new I18nException("error.sync.invalid.resolution", resolution);
-        }
-    }
-
-    /**
-     * 处理客户端上传的数据
-     */
-    private void processClientData(String userId, SyncRequest.SyncData data, List<String> deletedIds) {
-        if (data == null) {
+        if ("server".equalsIgnoreCase(resolution)) {
             return;
         }
-        
-        // 处理日记条目
-        if (data.getEntries() != null) {
-            for (SyncRequest.MoodEntryDto entryDto : data.getEntries()) {
-                saveOrUpdateEntry(userId, entryDto);
+        if ("client".equalsIgnoreCase(resolution)) {
+            if (request.getEntry() == null) {
+                throw new RuntimeException("entry is required when resolution=client");
             }
-        }
-        
-        // 处理自定义因素
-        if (data.getCustomFactors() != null) {
-            for (SyncRequest.FactorOptionDto factorDto : data.getCustomFactors()) {
-                saveOrUpdateFactor(userId, factorDto);
+            if (!entryId.equals(request.getEntry().getId())) {
+                throw new RuntimeException("path entryId and body entry.id mismatch");
             }
-        }
-        
-        // 处理自定义模板
-        if (data.getCustomTemplates() != null) {
-            for (SyncRequest.JournalTemplateDto templateDto : data.getCustomTemplates()) {
-                saveOrUpdateTemplate(userId, templateDto);
-            }
-        }
-        
-        // 处理用户设置
-        if (data.getSettings() != null) {
-            saveOrUpdateSettings(userId, data.getSettings());
+            saveOrUpdateEntry(userId, request.getEntry(), null);
+            return;
         }
 
-        // 处理安全设置
-        if (data.getSecuritySettings() != null) {
-            saveOrUpdateSecuritySettings(userId, data.getSecuritySettings());
-        }
+        throw new RuntimeException("invalid resolution");
+    }
 
-        // 处理删除的条目
-        if (deletedIds != null) {
-            for (String entryId : deletedIds) {
-                MoodEntry entry = moodEntryMapper.selectById(entryId);
-                if (entry != null && entry.getUserId().equals(userId)) {
-                    entry.setIsDeleted(true);
-                    entry.setDeletedAt(LocalDateTime.now());
-                    moodEntryMapper.updateById(entry);
+    private static final class ApplyResult {
+        private int uploaded;
+        private int deleted;
+        private final List<SyncResponse.ConflictInfo> conflicts = new ArrayList<>();
+    }
+
+    private ApplyResult applyClientChanges(String userId, SyncRequest request, LocalDateTime lastSyncAt) {
+        ApplyResult result = new ApplyResult();
+
+        if (request.getEntries() != null) {
+            for (SyncRequest.MoodEntryDto entry : request.getEntries()) {
+                if (entry == null || entry.getId() == null) {
+                    continue;
+                }
+                result.uploaded++;
+                Conflict conflict = saveOrUpdateEntry(userId, entry, lastSyncAt);
+                if (conflict != null) {
+                    result.conflicts.add(conflict.toDto());
                 }
             }
         }
+
+        if (request.getDeletes() != null) {
+            for (SyncRequest.DeleteDto del : request.getDeletes()) {
+                if (del == null || del.getId() == null || del.getDeletedAt() == null) {
+                    continue;
+                }
+                boolean applied = applyDelete(userId, del.getId(), del.getDeletedAt(), lastSyncAt);
+                if (applied) {
+                    result.deleted++;
+                }
+            }
+        }
+
+        return result;
     }
 
-    /**
-     * 保存或更新日记条目
-     */
-    private void saveOrUpdateEntry(String userId, SyncRequest.MoodEntryDto dto) {
-        MoodEntry entry = moodEntryMapper.selectById(dto.getId());
-        
-        if (entry == null) {
-            // 新建条目
-            entry = new MoodEntry();
-            entry.setId(dto.getId());
-            entry.setUserId(userId);
-            entry.setEntryDate(LocalDate.parse(dto.getDate()));
-            entry.setMoodType(dto.getMood());
-            entry.setJournalContent(dto.getJournal());
-            entry.setPhotos(dto.getPhotos() != null ? "[" + dto.getPhotos().stream().map(p -> "\"" + p + "\"").collect(Collectors.joining(",")) + "]" : "[]");
-            entry.setJournalEncrypted(false);
-            entry.setSyncVersion(1);
-            entry.setIsDeleted(false);
-            moodEntryMapper.insert(entry);
-            
-            // 保存影响因素关联
-            saveEntryFactors(entry.getId(), dto.getFactors());
-        } else {
-            // 更新条目
-            updateEntryFromDto(entry, dto);
-            entry.setSyncVersion(entry.getSyncVersion() + 1);
-            moodEntryMapper.updateById(entry);
-        }
-    }
+    private static final class Conflict {
+        private final String id;
+        private final LocalDateTime clientUpdatedAt;
+        private final LocalDateTime serverUpdatedAt;
+        private final SyncRequest.MoodEntryDto clientEntry;
+        private final SyncRequest.MoodEntryDto serverEntry;
+        private final String autoResolution;
 
-    /**
-     * 更新条目数据
-     */
-    private void updateEntryFromDto(MoodEntry entry, SyncRequest.MoodEntryDto dto) {
-        if (dto.getMood() != null) {
-            entry.setMoodType(dto.getMood());
+        private Conflict(String id,
+                         LocalDateTime clientUpdatedAt,
+                         LocalDateTime serverUpdatedAt,
+                         SyncRequest.MoodEntryDto clientEntry,
+                         SyncRequest.MoodEntryDto serverEntry,
+                         String autoResolution) {
+            this.id = id;
+            this.clientUpdatedAt = clientUpdatedAt;
+            this.serverUpdatedAt = serverUpdatedAt;
+            this.clientEntry = clientEntry;
+            this.serverEntry = serverEntry;
+            this.autoResolution = autoResolution;
         }
-        if (dto.getJournal() != null) {
-            entry.setJournalContent(dto.getJournal());
-        }
-        if (dto.getPhotos() != null) {
-            entry.setPhotos("[" + dto.getPhotos().stream().map(p -> "\"" + p + "\"").collect(Collectors.joining(",")) + "]");
-        }
-    }
 
-    /**
-     * 保存影响因素关联
-     */
-    private void saveEntryFactors(String entryId, List<String> factorIds) {
-        if (factorIds == null) {
-            return;
-        }
-        
-        // 删除旧关联
-        entryFactorMapper.deleteByEntryId(entryId);
-        
-        // 添加新关联
-        for (String factorId : factorIds) {
-            EntryFactor entryFactor = new EntryFactor();
-            entryFactor.setId(UUID.randomUUID().toString());
-            entryFactor.setEntryId(entryId);
-            entryFactor.setFactorId(factorId);
-            entryFactorMapper.insert(entryFactor);
+        private SyncResponse.ConflictInfo toDto() {
+            return SyncResponse.ConflictInfo.builder()
+                    .id(id)
+                    .clientUpdatedAt(clientUpdatedAt)
+                    .serverUpdatedAt(serverUpdatedAt)
+                    .clientEntry(clientEntry)
+                    .serverEntry(serverEntry)
+                    .autoResolution(autoResolution)
+                    .build();
         }
     }
 
     /**
-     * 保存或更新因素选项
+     * @return Conflict if need manual resolution, otherwise null
      */
-    private void saveOrUpdateFactor(String userId, SyncRequest.FactorOptionDto dto) {
-        FactorOption factor = factorOptionMapper.selectById(dto.getId());
-        
-        if (factor == null) {
-            factor = new FactorOption();
-            factor.setId(dto.getId());
-            factor.setUserId(userId);
-            factor.setLabel(dto.getLabel());
-            factor.setEmoji(dto.getEmoji());
-            factor.setIsCustom(true);
-            factor.setIsActive(true);
-            factorOptionMapper.insert(factor);
-        } else {
-            factor.setLabel(dto.getLabel());
-            factor.setEmoji(dto.getEmoji());
-            factorOptionMapper.updateById(factor);
-        }
-    }
-
-    /**
-     * 保存或更新模板
-     */
-    private void saveOrUpdateTemplate(String userId, SyncRequest.JournalTemplateDto dto) {
-        JournalTemplate template = journalTemplateMapper.selectById(dto.getId());
-        
-        if (template == null) {
-            template = new JournalTemplate();
-            template.setId(dto.getId());
-            template.setUserId(userId);
-            template.setCategory(dto.getCategory());
-            template.setTitleKey(dto.getTitleKey());
-            template.setContentKey(dto.getContentKey());
-            template.setIsCustom(true);
-            template.setIsActive(true);
-            template.setUsageCount(0);
-            journalTemplateMapper.insert(template);
-        } else {
-            template.setCategory(dto.getCategory());
-            template.setTitleKey(dto.getTitleKey());
-            template.setContentKey(dto.getContentKey());
-            journalTemplateMapper.updateById(template);
-        }
-    }
-
-    /**
-     * 保存或更新用户设置
-     */
-    private void saveOrUpdateSettings(String userId, SyncRequest.UserSettingsDto dto) {
-        UserSetting setting = userSettingMapper.findByUserId(userId);
-
-        if (setting == null) {
-            setting = new UserSetting();
-            setting.setId(UUID.randomUUID().toString());
-            setting.setUserId(userId);
-            setting.setSettingsData("{}");
-            setting.setEncrypted(dto.getEncrypted());
-            userSettingMapper.insert(setting);
-        } else {
-            setting.setEncrypted(dto.getEncrypted());
-            userSettingMapper.updateById(setting);
-        }
-    }
-
-    /**
-     * 保存或更新安全设置
-     */
-    private void saveOrUpdateSecuritySettings(String userId, SyncRequest.SecuritySettingsDto dto) {
-        // 安全设置处理逻辑
-        log.info("保存安全设置, 用户: {}, 密码启用: {}", userId, dto.getPasswordEnabled());
-        SecuritySetting setting = securitySettingMapper.findByUserId(userId);
-        if (setting == null) {
-            setting = new SecuritySetting();
-            setting.setId(UUID.randomUUID().toString());
-            setting.setUserId(userId);
-            setting.setPasswordProtected(dto.getPasswordEnabled());
-            setting.setPasswordHash(dto.getPasswordHash());
-            setting.setSecurityQuestions(dto.getSecurityQuestions() != null ? convertSecurityQuestionsToJson(dto.getSecurityQuestions()) : "[]");
-            securitySettingMapper.insert(setting);
-        } else {
-            setting.setPasswordProtected(dto.getPasswordEnabled());
-            setting.setSecurityQuestions(dto.getSecurityQuestions() != null ? convertSecurityQuestionsToJson(dto.getSecurityQuestions()) : "[]");
-            setting.setPasswordHash(dto.getPasswordHash());
-            securitySettingMapper.updateById(setting);
-        }
-    }
-
-    /**
-     * 将安全问题列表转换为 JSON 字符串
-     */
-    private String convertSecurityQuestionsToJson(List<SyncRequest.SecurityQuestionDto> questions) {
-        if (questions == null || questions.isEmpty()) {
-            return "[]";
-        }
-        return JsonUtil.toJsonArray(questions, q -> {
-            Map<String, String> fields = new HashMap<>();
-            fields.put("id", q.getId() != null ? q.getId() : "");
-            fields.put("question", q.getQuestion() != null ? q.getQuestion() : "");
-            fields.put("answerHash", q.getAnswerHash() != null ? q.getAnswerHash() : "");
-            return JsonUtil.createJsonObject(fields);
-        });
-    }
-
-    /**
-     * 获取服务器端安全设置
-     */
-    private SyncRequest.SecuritySettingsDto getServerSecurity(String userId) {
-        SecuritySetting setting = securitySettingMapper.findByUserId(userId);
-        if (setting == null) {
+    private Conflict saveOrUpdateEntry(String userId, SyncRequest.MoodEntryDto dto, LocalDateTime lastSyncAt) {
+        // tombstone
+        if (dto.getDeletedAt() != null) {
+            applyDelete(userId, dto.getId(), dto.getDeletedAt(), lastSyncAt);
             return null;
         }
-        SyncRequest.SecuritySettingsDto dto = new SyncRequest.SecuritySettingsDto();
-        dto.setPasswordEnabled(setting.getPasswordProtected());
-        dto.setPasswordHash(setting.getPasswordHash());
-        dto.setSecurityQuestions(JsonUtil.jsonToObject(setting.getSecurityQuestions(), List.class));
-        return dto;
+
+        MoodEntry server = moodEntryMapper.selectById(dto.getId());
+        if (server == null) {
+            MoodEntry created = new MoodEntry();
+            created.setId(dto.getId());
+            created.setUserId(userId);
+            created.setEntryDate(dto.getDate() != null ? LocalDate.parse(dto.getDate()) : null);
+            created.setMoodType(dto.getMood());
+            created.setJournalContent(dto.getJournal());
+            created.setPhotos(toJsonArray(dto.getPhotos()));
+            created.setJournalEncrypted(false);
+            created.setSyncVersion(1);
+            created.setIsDeleted(false);
+            created.setDeletedAt(null);
+            if (dto.getCreatedAt() != null) {
+                created.setCreatedAt(dto.getCreatedAt());
+            }
+            if (dto.getUpdatedAt() != null) {
+                created.setUpdatedAt(dto.getUpdatedAt());
+            }
+            moodEntryMapper.insert(created);
+            return null;
+        }
+
+        if (!userId.equals(server.getUserId())) {
+            return null;
+        }
+
+        LocalDateTime clientUpdatedAt = dto.getUpdatedAt();
+        LocalDateTime serverUpdatedAt = server.getUpdatedAt();
+
+        if (lastSyncAt != null && clientUpdatedAt != null && serverUpdatedAt != null
+                && clientUpdatedAt.isAfter(lastSyncAt) && serverUpdatedAt.isAfter(lastSyncAt)) {
+            Duration delta = Duration.between(clientUpdatedAt, serverUpdatedAt).abs();
+            if (delta.compareTo(CONFLICT_WINDOW) < 0) {
+                return new Conflict(
+                        dto.getId(),
+                        clientUpdatedAt,
+                        serverUpdatedAt,
+                        dto,
+                        convertToEntryDto(server),
+                        "manual"
+                );
+            }
+            // auto resolution by timestamp
+            if (clientUpdatedAt.isAfter(serverUpdatedAt)) {
+                updateServerEntryFromClient(server, dto);
+                return null;
+            }
+            return null;
+        }
+
+        // timestamp wins
+        if (clientUpdatedAt != null && serverUpdatedAt != null && serverUpdatedAt.isAfter(clientUpdatedAt)) {
+            return null;
+        }
+
+        updateServerEntryFromClient(server, dto);
+        return null;
     }
 
-    /**
-     * 获取服务器端更新的日记条目
-     */
+    private void updateServerEntryFromClient(MoodEntry server, SyncRequest.MoodEntryDto dto) {
+        if (dto.getDate() != null) {
+            server.setEntryDate(LocalDate.parse(dto.getDate()));
+        }
+        if (dto.getMood() != null) {
+            server.setMoodType(dto.getMood());
+        }
+        if (dto.getJournal() != null) {
+            server.setJournalContent(dto.getJournal());
+        }
+        if (dto.getPhotos() != null) {
+            server.setPhotos(toJsonArray(dto.getPhotos()));
+        }
+        if (dto.getUpdatedAt() != null) {
+            server.setUpdatedAt(dto.getUpdatedAt());
+        }
+        server.setIsDeleted(false);
+        server.setDeletedAt(null);
+        server.setSyncVersion(server.getSyncVersion() != null ? server.getSyncVersion() + 1 : 1);
+        moodEntryMapper.updateById(server);
+
+    }
+
+    private boolean applyDelete(String userId, String entryId, LocalDateTime deletedAt, LocalDateTime lastSyncAt) {
+        MoodEntry entry = moodEntryMapper.selectById(entryId);
+        if (entry == null || !userId.equals(entry.getUserId())) {
+            return false;
+        }
+
+        // conflict with server update after lastSyncAt
+        if (lastSyncAt != null && entry.getUpdatedAt() != null
+                && entry.getUpdatedAt().isAfter(lastSyncAt)
+                && deletedAt != null && deletedAt.isAfter(lastSyncAt)) {
+            if (!deletedAt.isAfter(entry.getUpdatedAt())) {
+                return false;
+            }
+        }
+
+        // 删除 vs 更新冲突：deletedAt > updatedAt => delete else keep
+        if (entry.getUpdatedAt() != null && deletedAt != null && deletedAt.isBefore(entry.getUpdatedAt())) {
+            return false;
+        }
+
+        // 幂等：只接受更晚的删除时间
+        if (entry.getDeletedAt() != null && !deletedAt.isAfter(entry.getDeletedAt())) {
+            return false;
+        }
+
+        entry.setIsDeleted(true);
+        entry.setDeletedAt(deletedAt);
+        entry.setSyncVersion(entry.getSyncVersion() != null ? entry.getSyncVersion() + 1 : 1);
+        moodEntryMapper.updateById(entry);
+        return true;
+    }
+
+
     private List<SyncRequest.MoodEntryDto> getServerEntries(String userId, LocalDateTime lastSyncAt) {
         LambdaQueryWrapper<MoodEntry> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(MoodEntry::getUserId, userId)
-               .eq(MoodEntry::getIsDeleted, false);
-        
+                .eq(MoodEntry::getIsDeleted, false);
+
         if (lastSyncAt != null) {
             wrapper.gt(MoodEntry::getUpdatedAt, lastSyncAt);
         }
-        
+
         List<MoodEntry> entries = moodEntryMapper.selectList(wrapper);
-        
         return entries.stream().map(this::convertToEntryDto).collect(Collectors.toList());
     }
 
-    /**
-     * 转换为 MoodEntryDto
-     */
+    private List<SyncRequest.DeleteDto> getServerDeletes(String userId, LocalDateTime lastSyncAt) {
+        if (lastSyncAt == null) {
+            return new ArrayList<>();
+        }
+
+        LambdaQueryWrapper<MoodEntry> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(MoodEntry::getUserId, userId)
+                .eq(MoodEntry::getIsDeleted, true)
+                .isNotNull(MoodEntry::getDeletedAt)
+                .gt(MoodEntry::getDeletedAt, lastSyncAt);
+
+        List<MoodEntry> deleted = moodEntryMapper.selectList(wrapper);
+        return deleted.stream().map(e -> {
+            SyncRequest.DeleteDto dto = new SyncRequest.DeleteDto();
+            dto.setId(e.getId());
+            dto.setDeletedAt(e.getDeletedAt());
+            return dto;
+        }).collect(Collectors.toList());
+    }
+
     private SyncRequest.MoodEntryDto convertToEntryDto(MoodEntry entry) {
         SyncRequest.MoodEntryDto dto = new SyncRequest.MoodEntryDto();
         dto.setId(entry.getId());
-        dto.setDate(entry.getEntryDate().toString());
+        dto.setDate(entry.getEntryDate() != null ? entry.getEntryDate().toString() : null);
+
         dto.setMood(entry.getMoodType());
+
         dto.setJournal(entry.getJournalContent());
-        dto.setPhotos(entry.getPhotos() != null && !entry.getPhotos().isEmpty() && !"[]".equals(entry.getPhotos()) ? 
-                Arrays.asList(entry.getPhotos().replace("[", "").replace("]", "").replace("\"", "").split(",")) : 
-                new ArrayList<>());
+        dto.setPhotos(fromJsonArray(entry.getPhotos()));
         dto.setCreatedAt(entry.getCreatedAt());
         dto.setUpdatedAt(entry.getUpdatedAt());
-        
-        // 获取影响因素
-        List<EntryFactor> entryFactors = entryFactorMapper.findByEntryId(entry.getId());
-        List<String> factorIds = entryFactors.stream()
-                .map(EntryFactor::getFactorId)
+        dto.setDeletedAt(entry.getDeletedAt());
+        return dto;
+    }
+
+    private List<String> fromJsonArray(String jsonArray) {
+        if (jsonArray == null || jsonArray.isBlank() || "[]".equals(jsonArray)) {
+            return new ArrayList<>();
+        }
+        String inner = jsonArray.trim();
+        if (inner.startsWith("[")) {
+            inner = inner.substring(1);
+        }
+        if (inner.endsWith("]")) {
+            inner = inner.substring(0, inner.length() - 1);
+        }
+        inner = inner.trim();
+        if (inner.isEmpty()) {
+            return new ArrayList<>();
+        }
+        // naive parse: assumes values are quoted and do not contain commas
+        return Arrays.stream(inner.split(","))
+                .map(s -> s.trim().replace("\"", ""))
+                .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
-        dto.setFactors(factorIds);
-        
-        return dto;
     }
 
-    /**
-     * 获取服务器端用户设置
-     */
-    private SyncRequest.UserSettingsDto getServerSettings(String userId) {
-        UserSetting setting = userSettingMapper.findByUserId(userId);
-        
-        if (setting == null) {
-            return null;
+    private String toJsonArray(List<String> values) {
+        if (values == null) {
+            return "[]";
         }
-        
-        SyncRequest.UserSettingsDto dto = new SyncRequest.UserSettingsDto();
-        dto.setEncrypted(setting.getEncrypted());
-        dto.setCreatedAt(setting.getCreatedAt());
-        return dto;
+        return "[" + values.stream()
+                .filter(Objects::nonNull)
+                .map(v -> "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+                .collect(Collectors.joining(",")) + "]";
     }
 
-    /**
-     * 获取服务器端自定义因素
-     */
-    private List<SyncRequest.FactorOptionDto> getServerFactors(String userId, LocalDateTime lastSyncAt) {
-        LambdaQueryWrapper<FactorOption> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(FactorOption::getUserId, userId)
-               .eq(FactorOption::getIsActive, true);
-        
-        if (lastSyncAt != null) {
-            wrapper.gt(FactorOption::getUpdatedAt, lastSyncAt);
-        }
-        
-        List<FactorOption> factors = factorOptionMapper.selectList(wrapper);
-        
-        return factors.stream().map(this::convertToFactorDto).collect(Collectors.toList());
-    }
-
-    /**
-     * 转换为 FactorOptionDto
-     */
-    private SyncRequest.FactorOptionDto convertToFactorDto(FactorOption factor) {
-        SyncRequest.FactorOptionDto dto = new SyncRequest.FactorOptionDto();
-        dto.setId(factor.getId());
-        dto.setLabel(factor.getLabel());
-        dto.setEmoji(factor.getEmoji());
-        dto.setIsCustom(factor.getIsCustom());
-        return dto;
-    }
-
-    /**
-     * 获取服务器端自定义模板
-     */
-    private List<SyncRequest.JournalTemplateDto> getServerTemplates(String userId, LocalDateTime lastSyncAt) {
-        LambdaQueryWrapper<JournalTemplate> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(JournalTemplate::getUserId, userId)
-               .eq(JournalTemplate::getIsActive, true);
-        
-        if (lastSyncAt != null) {
-            wrapper.gt(JournalTemplate::getUpdatedAt, lastSyncAt);
-        }
-        
-        List<JournalTemplate> templates = journalTemplateMapper.selectList(wrapper);
-        
-        return templates.stream().map(this::convertToTemplateDto).collect(Collectors.toList());
-    }
-
-    /**
-     * 转换为 JournalTemplateDto
-     */
-    private SyncRequest.JournalTemplateDto convertToTemplateDto(JournalTemplate template) {
-        SyncRequest.JournalTemplateDto dto = new SyncRequest.JournalTemplateDto();
-        dto.setId(template.getId());
-        dto.setCategory(template.getCategory());
-        dto.setTitleKey(template.getTitleKey());
-        dto.setContentKey(template.getContentKey());
-        dto.setIsCustom(template.getIsCustom());
-        dto.setCreatedAt(template.getCreatedAt());
-        return dto;
-    }
-
-    /**
-     * 检测冲突
-     */
-    private List<SyncResponse.ConflictInfo> detectConflicts(String userId, 
-            SyncRequest.SyncData clientData, LocalDateTime lastSyncAt) {
-        List<SyncResponse.ConflictInfo> conflicts = new ArrayList<>();
-        
-        if (clientData == null || clientData.getEntries() == null || lastSyncAt == null) {
-            return conflicts;
-        }
-        
-        for (SyncRequest.MoodEntryDto clientEntry : clientData.getEntries()) {
-            MoodEntry serverEntry = moodEntryMapper.selectById(clientEntry.getId());
-            
-            if (serverEntry != null && serverEntry.getUpdatedAt().isAfter(lastSyncAt)) {
-                // 检测到冲突
-                SyncResponse.ConflictInfo conflict = SyncResponse.ConflictInfo.builder()
-                        .entryId(clientEntry.getId())
-                        .resolution("server")  // 默认保留服务器版本
-                        .build();
-                conflicts.add(conflict);
-            }
-        }
-        
-        return conflicts;
-    }
-
-    /**
-     * 更新同步状态
-     */
     private void updateSyncStatus(String userId, String deviceId, LocalDateTime syncTime) {
         SyncStatus syncStatus = syncStatusMapper.findByUserIdAndDeviceId(userId, deviceId);
-        
         if (syncStatus == null) {
             syncStatus = new SyncStatus();
             syncStatus.setId(UUID.randomUUID().toString());
@@ -538,14 +388,11 @@ public class SyncServiceImpl implements SyncService {
             syncStatus.setDeviceId(deviceId);
             syncStatus.setIsActive(true);
             syncStatus.setPendingChanges(0);
-        }
-        
-        syncStatus.setLastSyncAt(syncTime);
-        
-        if (syncStatus.getId() == null) {
+            syncStatus.setLastSyncAt(syncTime);
             syncStatusMapper.insert(syncStatus);
-        } else {
-            syncStatusMapper.updateById(syncStatus);
+            return;
         }
+        syncStatus.setLastSyncAt(syncTime);
+        syncStatusMapper.updateById(syncStatus);
     }
 }

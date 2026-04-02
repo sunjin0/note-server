@@ -127,6 +127,13 @@ public class JwtUtil {
     }
 
     /**
+     * 解析并返回 Claims（给拦截器等基础设施使用）
+     */
+    public Claims parseClaims(String token) {
+        return parseToken(token);
+    }
+
+    /**
      * 获取 Token 过期时间
      */
     public Date getExpirationDate(String token) {

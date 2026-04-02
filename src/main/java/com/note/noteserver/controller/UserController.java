@@ -3,10 +3,8 @@ package com.note.noteserver.controller;
 import com.note.noteserver.dto.ApiResponse;
 import com.note.noteserver.dto.UpdateProfileRequest;
 import com.note.noteserver.dto.UserDto;
-import com.note.noteserver.exception.UnauthorizedException;
 import com.note.noteserver.service.UserService;
 import com.note.noteserver.util.I18nMessageUtil;
-import com.note.noteserver.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -23,15 +21,13 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
-    private final JwtUtil jwtUtil;
 
     /**
      * 获取用户资料
      */
     @GetMapping("/profile")
     public ResponseEntity<ApiResponse<UserDto>> getProfile(
-            @RequestHeader("Authorization") String authHeader) {
-        String userId = extractUserId(authHeader);
+            @RequestAttribute("userId") String userId) {
         UserDto user = userService.getProfile(userId);
         return ResponseEntity.ok(ApiResponse.success(user));
     }
@@ -41,9 +37,8 @@ public class UserController {
      */
     @PutMapping("/profile")
     public ResponseEntity<ApiResponse<UserDto>> updateProfile(
-            @RequestHeader("Authorization") String authHeader,
+            @RequestAttribute("userId") String userId,
             @Valid @RequestBody UpdateProfileRequest request) {
-        String userId = extractUserId(authHeader);
         UserDto user = userService.updateProfile(userId, request);
         return ResponseEntity.ok(ApiResponse.success(user));
     }
@@ -53,23 +48,8 @@ public class UserController {
      */
     @DeleteMapping("/account")
     public ResponseEntity<ApiResponse<Map<String, String>>> deleteAccount(
-            @RequestHeader("Authorization") String authHeader) {
-        String userId = extractUserId(authHeader);
+            @RequestAttribute("userId") String userId) {
         userService.deleteAccount(userId);
         return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.account.deleted"))));
-    }
-
-    /**
-     * 从 Authorization Header 中提取用户ID
-     */
-    private String extractUserId(String authHeader) {
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new UnauthorizedException(I18nMessageUtil.getMessage("error.auth.invalid.auth.header"));
-        }
-        String token = authHeader.substring(7);
-        if (!jwtUtil.validateToken(token)) {
-            throw new UnauthorizedException(I18nMessageUtil.getMessage("error.auth.invalid.token"));
-        }
-        return jwtUtil.extractUserId(token);
     }
 }

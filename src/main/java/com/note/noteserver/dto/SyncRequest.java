@@ -1,14 +1,14 @@
 package com.note.noteserver.dto;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 数据同步请求
+ * 数据同步请求 - 以 SYNC_DESIGN.md 为准
  */
 @Data
 public class SyncRequest {
@@ -16,24 +16,22 @@ public class SyncRequest {
     @NotBlank(message = "{validation.device.id.required}")
     private String deviceId;
 
+    /**
+     * ISO8601。客户端上次完成同步的时间戳
+     */
     private LocalDateTime lastSyncAt;
 
-    @NotNull(message = "{validation.sync.data.required}")
-    private SyncData data;
-
-    private List<String> deletedIds;
+    /**
+     * 待上传的 entries（增量）
+     */
+    @Valid
+    private List<MoodEntryDto> entries;
 
     /**
-     * 同步数据
+     * 待上传的 deletes（增量）
      */
-    @Data
-    public static class SyncData {
-        private List<MoodEntryDto> entries;
-        private UserSettingsDto settings;
-        private List<FactorOptionDto> customFactors;
-        private List<JournalTemplateDto> customTemplates;
-        private SecuritySettingsDto securitySettings;
-    }
+    @Valid
+    private List<DeleteDto> deletes;
 
     /**
      * 日记条目 DTO
@@ -42,69 +40,25 @@ public class SyncRequest {
     public static class MoodEntryDto {
         private String id;
         private String date;
+        /**
+         * 心情类型 (great/good/okay/sad/angry)
+         */
         private String mood;
-        private String journal;
         private List<String> factors;
+        private String journal;
         private List<String> photos;
+
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
+        private LocalDateTime deletedAt;
     }
 
     /**
-     * 用户设置 DTO
+     * 删除操作 DTO
      */
     @Data
-    public static class UserSettingsDto {
-        private Boolean encrypted;
-        private LocalDateTime createdAt;
-    }
-
-    /**
-     * 影响因素 DTO
-     */
-    @Data
-    public static class FactorOptionDto {
+    public static class DeleteDto {
         private String id;
-        private String label;
-        private String emoji;
-        private Boolean isCustom;
-    }
-
-    /**
-     * 日记模板 DTO
-     */
-    @Data
-    public static class JournalTemplateDto {
-        private String id;
-        private String category;
-        private String titleKey;
-        private String contentKey;
-        private Boolean isCustom;
-        private LocalDateTime createdAt;
-    }
-    /**
-     * 安全设置 DTO
-     */
-    @Data
-    public static class SecuritySettingsDto {
-        @NotBlank(message = "密码是否启用不能为空")
-        private Boolean passwordEnabled;
-        @NotBlank(message = "密码哈希不能为空")
-        private String passwordHash;
-        @NotNull(message = "安全问题列表不能为空")
-        private List<SecurityQuestionDto> securityQuestions;
-        @NotNull(message = "锁定尝试次数不能为空")
-        private Integer lockoutAttempts;
-        @NotNull(message = "锁定截止时间不能为空")
-        private LocalDateTime lockoutUntil;
-    }
-    /**
-     * 安全问题 DTO
-     */
-    @Data
-    public static class SecurityQuestionDto {
-        private String id;
-        private String question;
-        private String answerHash;
+        private LocalDateTime deletedAt;
     }
 }

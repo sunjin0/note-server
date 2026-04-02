@@ -64,6 +64,20 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 处理无权限异常（403）
+     */
+    @ExceptionHandler({ForbiddenException.class})
+    public ResponseEntity<ApiResponse<Void>> handleForbiddenException(RuntimeException ex) {
+        log.warn("访问被拒绝: {}", ex.getMessage());
+        String message = ex.getMessage();
+        if (message == null || message.isEmpty()) {
+            message = I18nMessageUtil.getMessage("error.forbidden");
+        }
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error("FORBIDDEN", message));
+    }
+
+    /**
      * 处理业务异常（400）
      */
     @ExceptionHandler(RuntimeException.class)

@@ -1,74 +1,53 @@
 package com.note.noteserver.controller;
 
 import com.note.noteserver.dto.*;
-import com.note.noteserver.exception.UnauthorizedException;
 import com.note.noteserver.service.SyncService;
-import com.note.noteserver.util.I18nMessageUtil;
-import com.note.noteserver.util.JwtUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
 /**
- * 数据同步控制器
+ * 数据同步控制器 - 以 SYNC_DESIGN.md 为准
  */
 @RestController
-@RequestMapping("/sync")
+@RequestMapping("/api/v1/sync")
 @RequiredArgsConstructor
 public class SyncController {
 
     private final SyncService syncService;
-    private final JwtUtil jwtUtil;
 
     /**
-     * 执行数据同步
+     * 执行双向同步 (apiSync)
+     * 上传本地数据并下载云端数据
      */
     @PostMapping
     public ResponseEntity<ApiResponse<SyncResponse>> sync(
-            @RequestHeader("Authorization") String authHeader,
+            @RequestAttribute("userId") String userId,
             @Valid @RequestBody SyncRequest request) {
-        String userId = extractUserId(authHeader);
         SyncResponse response = syncService.sync(userId, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
-
+    
     /**
-     * 获取同步状态
+     * 获取同步状态 (apiGetSyncStatus)
      */
     @GetMapping("/status")
     public ResponseEntity<ApiResponse<SyncStatusResponse>> getSyncStatus(
-            @RequestHeader("Authorization") String authHeader) {
-        String userId = extractUserId(authHeader);
+            @RequestAttribute("userId") String userId) {
         SyncStatusResponse response = syncService.getSyncStatus(userId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     /**
-     * 解决同步冲突
+     * 解决冲突
      */
-    @PostMapping("/resolve-conflict")
-    public ResponseEntity<ApiResponse<Map<String, String>>> resolveConflict(
-            @RequestHeader("Authorization") String authHeader,
+    @PostMapping("/conflicts/{entryId}/resolve")
+    public ResponseEntity<ApiResponse<Void>> resolveConflict(
+            @RequestAttribute("userId") String userId,
+            @PathVariable("entryId") String entryId,
             @Valid @RequestBody ResolveConflictRequest request) {
-        String userId = extractUserId(authHeader);
-        syncService.resolveConflict(userId, request);
-        return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.conflict.resolved"))));
-    }
-
-    /**
-     * 从 Authorization Header 中提取用户ID
-     */
-    private String extractUserId(String authHeader) {
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            throw new UnauthorizedException(I18nMessageUtil.getMessage("error.auth.invalid.auth.header"));
-        }
-        String token = authHeader.substring(7);
-        if (!jwtUtil.validateToken(token)) {
-            throw new UnauthorizedException(I18nMessageUtil.getMessage("error.auth.invalid.token"));
-        }
-        return jwtUtil.extractUserId(token);
+        syncService.resolveConflict(userId, entryId, request);
+        return ResponseEntity.ok(ApiResponse.success());
     }
 }

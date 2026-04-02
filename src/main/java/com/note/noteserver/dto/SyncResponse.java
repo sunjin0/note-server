@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 数据同步响应
+ * 数据同步响应 - 以 SYNC_DESIGN.md 为准
  */
 @Data
 @Builder
@@ -17,14 +17,20 @@ import java.util.List;
 @AllArgsConstructor
 public class SyncResponse {
 
-    private LocalDateTime serverTimestamp;
+    /** 服务器时间 */
+    private LocalDateTime serverTime;
+
+    /** 服务端下发的 entries（增量） */
     private List<SyncRequest.MoodEntryDto> entries;
-    private SyncRequest.UserSettingsDto settings;
-    private List<SyncRequest.FactorOptionDto> customFactors;
-    private List<SyncRequest.JournalTemplateDto> customTemplates;
-    private SyncRequest.SecuritySettingsDto securitySettings;
-    private List<String> deletedIds;
+
+    /** 服务端下发的 deletes（增量） */
+    private List<SyncRequest.DeleteDto> deletes;
+
+    /** 冲突列表 */
     private List<ConflictInfo> conflicts;
+
+    /** 统计信息 */
+    private Stats stats;
 
     /**
      * 冲突信息
@@ -34,8 +40,26 @@ public class SyncResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class ConflictInfo {
-        private String entryId;
-        private String resolution;
-        private SyncRequest.MoodEntryDto mergedEntry;
+        private String id;
+
+        private LocalDateTime clientUpdatedAt;
+        private LocalDateTime serverUpdatedAt;
+
+        private SyncRequest.MoodEntryDto clientEntry;
+        private SyncRequest.MoodEntryDto serverEntry;
+
+        /** server | client | manual */
+        private String autoResolution;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Stats {
+        private Integer uploaded;
+        private Integer downloaded;
+        private Integer deleted;
+        private Integer conflicts;
     }
 }
