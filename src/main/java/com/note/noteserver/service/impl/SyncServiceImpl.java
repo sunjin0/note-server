@@ -289,9 +289,9 @@ public class SyncServiceImpl implements SyncService {
         wrapper.eq(MoodEntry::getUserId, userId)
                 .eq(MoodEntry::getIsDeleted, false);
 
-        if (lastSyncAt != null) {
-            wrapper.gt(MoodEntry::getUpdatedAt, lastSyncAt);
-        }
+//        if (lastSyncAt != null) {
+//            wrapper.gt(MoodEntry::getUpdatedAt, lastSyncAt);
+//        }
 
         List<MoodEntry> entries = moodEntryMapper.selectList(wrapper);
         return entries.stream().map(this::convertToEntryDto).collect(Collectors.toList());
