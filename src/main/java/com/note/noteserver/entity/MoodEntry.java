@@ -55,6 +55,11 @@ public class MoodEntry {
     private String photos;
 
     /**
+     * 影响因素列表 (JSON)
+     */
+    private String factors;
+
+    /**
      * 创建时间
      */
     @TableField(value = "created_at", fill = FieldFill.INSERT)

@@ -173,6 +173,7 @@ public class SyncServiceImpl implements SyncService {
             created.setMoodType(dto.getMood());
             created.setJournalContent(dto.getJournal());
             created.setPhotos(toJsonArray(dto.getPhotos()));
+            created.setFactors(toJsonArray(dto.getFactors()));
             created.setJournalEncrypted(false);
             created.setSyncVersion(1);
             created.setIsDeleted(false);
@@ -236,6 +237,9 @@ public class SyncServiceImpl implements SyncService {
         }
         if (dto.getPhotos() != null) {
             server.setPhotos(toJsonArray(dto.getPhotos()));
+        }
+        if (dto.getFactors() != null) {
+            server.setFactors(toJsonArray(dto.getFactors()));
         }
         if (dto.getUpdatedAt() != null) {
             server.setUpdatedAt(dto.getUpdatedAt());
@@ -322,6 +326,7 @@ public class SyncServiceImpl implements SyncService {
 
         dto.setJournal(entry.getJournalContent());
         dto.setPhotos(fromJsonArray(entry.getPhotos()));
+        dto.setFactors(fromJsonArray(entry.getFactors()));
         dto.setCreatedAt(entry.getCreatedAt());
         dto.setUpdatedAt(entry.getUpdatedAt());
         dto.setDeletedAt(entry.getDeletedAt());
