@@ -6,9 +6,7 @@ import com.note.noteserver.dto.SyncRequest;
 import com.note.noteserver.dto.SyncResponse;
 import com.note.noteserver.dto.SyncStatusResponse;
 import com.note.noteserver.entity.MoodEntry;
-import com.note.noteserver.entity.SyncStatus;
 import com.note.noteserver.mapper.MoodEntryMapper;
-import com.note.noteserver.mapper.SyncStatusMapper;
 import com.note.noteserver.service.SyncService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +30,6 @@ public class SyncServiceImpl implements SyncService {
     private static final Duration CONFLICT_WINDOW = Duration.ofMinutes(5);
 
     private final MoodEntryMapper moodEntryMapper;
-    private final SyncStatusMapper syncStatusMapper;
 
     @Override
     @Transactional
@@ -44,8 +41,6 @@ public class SyncServiceImpl implements SyncService {
 
         List<SyncRequest.MoodEntryDto> serverEntries = getServerEntries(userId, lastSyncAt);
         List<SyncRequest.DeleteDto> serverDeletes = getServerDeletes(userId, lastSyncAt);
-
-        updateSyncStatus(userId, request.getDeviceId(), serverTime);
 
         return SyncResponse.builder()
                 .serverTime(serverTime)
@@ -61,20 +56,6 @@ public class SyncServiceImpl implements SyncService {
                 .build();
     }
 
-    @Override
-    public SyncStatusResponse getSyncStatus(String userId) {
-        LambdaQueryWrapper<SyncStatus> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SyncStatus::getUserId, userId)
-                .eq(SyncStatus::getIsActive, true)
-                .orderByDesc(SyncStatus::getLastSyncAt)
-                .last("LIMIT 1");
-
-        SyncStatus syncStatus = syncStatusMapper.selectOne(wrapper);
-        if (syncStatus == null) {
-            return new SyncStatusResponse(null, 0);
-        }
-        return new SyncStatusResponse(syncStatus.getLastSyncAt(), syncStatus.getPendingChanges());
-    }
 
     @Override
     @Transactional
@@ -379,20 +360,4 @@ public class SyncServiceImpl implements SyncService {
                 .collect(Collectors.joining(",")) + "]";
     }
 
-    private void updateSyncStatus(String userId, String deviceId, LocalDateTime syncTime) {
-        SyncStatus syncStatus = syncStatusMapper.findByUserIdAndDeviceId(userId, deviceId);
-        if (syncStatus == null) {
-            syncStatus = new SyncStatus();
-            syncStatus.setId(UUID.randomUUID().toString());
-            syncStatus.setUserId(userId);
-            syncStatus.setDeviceId(deviceId);
-            syncStatus.setIsActive(true);
-            syncStatus.setPendingChanges(0);
-            syncStatus.setLastSyncAt(syncTime);
-            syncStatusMapper.insert(syncStatus);
-            return;
-        }
-        syncStatus.setLastSyncAt(syncTime);
-        syncStatusMapper.updateById(syncStatus);
-    }
 }

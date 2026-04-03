@@ -28,16 +28,7 @@ public class SyncController {
         SyncResponse response = syncService.sync(userId, request);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
-    
-    /**
-     * 获取同步状态 (apiGetSyncStatus)
-     */
-    @GetMapping("/status")
-    public ResponseEntity<ApiResponse<SyncStatusResponse>> getSyncStatus(
-            @RequestAttribute("userId") String userId) {
-        SyncStatusResponse response = syncService.getSyncStatus(userId);
-        return ResponseEntity.ok(ApiResponse.success(response));
-    }
+
 
     /**
      * 解决冲突
