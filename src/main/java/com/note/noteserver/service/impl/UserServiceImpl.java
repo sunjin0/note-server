@@ -3,10 +3,9 @@ package com.note.noteserver.service.impl;
 import com.note.noteserver.dto.UpdateProfileRequest;
 import com.note.noteserver.dto.UserDto;
 import com.note.noteserver.entity.User;
-import com.note.noteserver.exception.I18nException;
+import com.note.noteserver.exception.ServiceException;
 import com.note.noteserver.mapper.UserMapper;
 import com.note.noteserver.service.UserService;
-import com.note.noteserver.util.I18nMessageUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,7 +25,7 @@ public class UserServiceImpl implements UserService {
     public UserDto getProfile(String userId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new I18nException("error.user.not.found");
+            throw new ServiceException("error.user.not.found");
         }
         return convertToUserDto(user);
     }
@@ -36,7 +35,7 @@ public class UserServiceImpl implements UserService {
     public UserDto updateProfile(String userId, UpdateProfileRequest request) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new I18nException("error.user.not.found");
+            throw new ServiceException("error.user.not.found");
         }
 
         boolean updated = false;
@@ -63,7 +62,7 @@ public class UserServiceImpl implements UserService {
     public void deleteAccount(String userId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new I18nException("error.user.not.found");
+            throw new ServiceException("error.user.not.found");
         }
         
         // 禁用用户（软删除）

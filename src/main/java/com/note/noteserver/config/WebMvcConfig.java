@@ -30,7 +30,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/health",
                         "/auth/login",
                         "/auth/register",
-                        "/auth/refresh"
+                        "/auth/refresh",
+                        "/auth/send-email-code",
+                        "/auth/forgot-password"
                 );
     }
 }

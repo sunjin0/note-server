@@ -2,6 +2,7 @@ package com.note.noteserver.controller;
 
 import com.note.noteserver.dto.*;
 import com.note.noteserver.service.AuthService;
+import com.note.noteserver.service.VerificationCodeService;
 import com.note.noteserver.util.I18nMessageUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
+    private final VerificationCodeService verificationCodeService;
 
     /**
      * 用户注册
@@ -80,5 +82,25 @@ public class AuthController {
             @Valid @RequestBody ChangePasswordRequest request) {
         authService.changePassword(userId, request);
         return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.password.changed"))));
+    }
+
+    /**
+     * 发送邮箱验证码（通用）
+     */
+    @PostMapping("/send-email-code")
+    public ResponseEntity<ApiResponse<Map<String, String>>> sendEmailCode(
+            @Valid @RequestBody SendEmailCodeRequest request) {
+        verificationCodeService.sendEmailCode(request.getEmail(), request.getPurpose());
+        return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.code.sent"))));
+    }
+
+    /**
+     * 忘记密码（通过邮箱验证码重置）
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<ApiResponse<Map<String, String>>> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest request) {
+        authService.forgotPassword(request);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("message", I18nMessageUtil.getMessage("success.password.reset"))));
     }
 }

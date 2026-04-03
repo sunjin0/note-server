@@ -8,7 +8,7 @@ import lombok.Getter;
  * 使用消息代码代替硬编码的错误消息
  */
 @Getter
-public class I18nException extends RuntimeException {
+public class ServiceException extends RuntimeException {
 
     private final String messageCode;
     private final Object[] args;
@@ -18,7 +18,7 @@ public class I18nException extends RuntimeException {
      *
      * @param messageCode 消息代码
      */
-    public I18nException(String messageCode) {
+    public ServiceException(String messageCode) {
         super(I18nMessageUtil.getMessage(messageCode));
         this.messageCode = messageCode;
         this.args = null;
@@ -30,7 +30,7 @@ public class I18nException extends RuntimeException {
      * @param messageCode 消息代码
      * @param args        消息参数
      */
-    public I18nException(String messageCode, Object... args) {
+    public ServiceException(String messageCode, Object... args) {
         super(I18nMessageUtil.getMessage(messageCode, args));
         this.messageCode = messageCode;
         this.args = args;
@@ -42,7 +42,7 @@ public class I18nException extends RuntimeException {
      * @param messageCode 消息代码
      * @param cause       原始异常
      */
-    public I18nException(String messageCode, Throwable cause) {
+    public ServiceException(String messageCode, Throwable cause) {
         super(I18nMessageUtil.getMessage(messageCode), cause);
         this.messageCode = messageCode;
         this.args = null;
@@ -55,7 +55,7 @@ public class I18nException extends RuntimeException {
      * @param args        消息参数
      * @param cause       原始异常
      */
-    public I18nException(String messageCode, Object[] args, Throwable cause) {
+    public ServiceException(String messageCode, Object[] args, Throwable cause) {
         super(I18nMessageUtil.getMessage(messageCode, args), cause);
         this.messageCode = messageCode;
         this.args = args;

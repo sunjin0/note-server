@@ -36,4 +36,9 @@ public interface AuthService {
      * 修改密码
      */
     void changePassword(String userId, ChangePasswordRequest request);
+
+    /**
+     * 忘记密码（通过邮箱验证码重置）
+     */
+    void forgotPassword(ForgotPasswordRequest request);
 }

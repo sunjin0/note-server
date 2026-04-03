@@ -5,6 +5,7 @@ import com.note.noteserver.util.I18nMessageUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mail.MailException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -40,13 +41,13 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 处理国际化业务异常（400）
+     * 处理业务异常（400）
      */
-    @ExceptionHandler(I18nException.class)
-    public ResponseEntity<ApiResponse<Void>> handleI18nException(I18nException ex) {
-        log.warn("国际化业务异常: {}", ex.getLocalizedMessage());
+    @ExceptionHandler(ServiceException.class)
+    public ResponseEntity<ApiResponse<Void>> handleServiceException(ServiceException ex) {
+        log.warn("业务异常: {}", ex.getMessage());
         return ResponseEntity.badRequest()
-                .body(ApiResponse.error("BUSINESS_ERROR", ex.getLocalizedMessage()));
+                .body(ApiResponse.error("BUSINESS_ERROR", ex.getMessage()));
     }
 
     /**
@@ -75,6 +76,17 @@ public class GlobalExceptionHandler {
         }
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error("FORBIDDEN", message));
+    }
+
+    /**
+     * 处理邮件发送异常（500）
+     */
+    @ExceptionHandler(MailException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMailException(MailException ex) {
+        log.error("邮件发送失败: {}", ex.getMessage());
+        String message = I18nMessageUtil.getMessage("error.mail.send.failed");
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("MAIL_SEND_FAILED", message));
     }
 
     /**

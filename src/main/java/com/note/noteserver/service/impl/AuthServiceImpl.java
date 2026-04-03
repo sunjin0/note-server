@@ -3,10 +3,11 @@ package com.note.noteserver.service.impl;
 import com.note.noteserver.dto.*;
 import com.note.noteserver.entity.RefreshToken;
 import com.note.noteserver.entity.User;
-import com.note.noteserver.exception.I18nException;
+import com.note.noteserver.exception.ServiceException;
 import com.note.noteserver.mapper.RefreshTokenMapper;
 import com.note.noteserver.mapper.UserMapper;
 import com.note.noteserver.service.AuthService;
+import com.note.noteserver.service.VerificationCodeService;
 import com.note.noteserver.util.JwtUtil;
 import com.note.noteserver.util.PasswordUtil;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +33,7 @@ public class AuthServiceImpl implements AuthService {
     private final RefreshTokenMapper refreshTokenMapper;
     private final PasswordUtil passwordUtil;
     private final JwtUtil jwtUtil;
+    private final VerificationCodeService verificationCodeService;
 
     @Override
     @Transactional
@@ -41,13 +43,13 @@ public class AuthServiceImpl implements AuthService {
         // 检查用户名是否已存在
         User existingUser = userMapper.findByUsername(request.getUsername());
         if (existingUser != null) {
-            throw new I18nException("error.user.username.exists");
+            throw new ServiceException("error.user.username.exists");
         }
         
         // 检查邮箱是否已存在
         User existingEmail = userMapper.findByEmail(request.getEmail());
         if (existingEmail != null) {
-            throw new I18nException("error.user.email.exists");
+            throw new ServiceException("error.user.email.exists");
         }
         // 创建用户
         User user = new User();
@@ -77,17 +79,17 @@ public class AuthServiceImpl implements AuthService {
         }
         
         if (user == null) {
-            throw new I18nException("error.user.not.found");
+            throw new ServiceException("error.user.not.found");
         }
         
         // 验证密码
         if (!passwordUtil.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new I18nException("error.user.invalid.credentials");
+            throw new ServiceException("error.user.invalid.credentials");
         }
         
         // 检查用户是否激活
         if (!Boolean.TRUE.equals(user.getIsActive())) {
-            throw new I18nException("error.user.disabled");
+            throw new ServiceException("error.user.disabled");
         }
         
         // 更新最后登录时间
@@ -121,12 +123,12 @@ public class AuthServiceImpl implements AuthService {
         
         // 验证 Refresh Token
         if (!jwtUtil.validateToken(token)) {
-            throw new I18nException("error.auth.invalid.refresh.token");
+            throw new ServiceException("error.auth.invalid.refresh.token");
         }
         
         // 验证是否为 Refresh Token
         if (!jwtUtil.isRefreshToken(token)) {
-            throw new I18nException("error.auth.invalid.token.type");
+            throw new ServiceException("error.auth.invalid.token.type");
         }
         
         // 提取用户ID
@@ -135,18 +137,18 @@ public class AuthServiceImpl implements AuthService {
         // 查找数据库中的令牌
         RefreshToken refreshToken = refreshTokenMapper.findByTokenHash(token);
         if (refreshToken == null || Boolean.TRUE.equals(refreshToken.getIsRevoked())) {
-            throw new I18nException("error.auth.refresh.token.revoked");
+            throw new ServiceException("error.auth.refresh.token.revoked");
         }
         
         // 检查是否过期
         if (refreshToken.getExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new I18nException("error.auth.refresh.token.expired");
+            throw new ServiceException("error.auth.refresh.token.expired");
         }
         
         // 获取用户信息
         User user = userMapper.selectById(userId);
         if (user == null || !Boolean.TRUE.equals(user.getIsActive())) {
-            throw new I18nException("error.user.not.found");
+            throw new ServiceException("error.user.not.found");
         }
         
         // 吊销旧令牌
@@ -162,7 +164,7 @@ public class AuthServiceImpl implements AuthService {
     public UserDto getCurrentUser(String userId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new I18nException("error.user.not.found");
+            throw new ServiceException("error.user.not.found");
         }
         return convertToUserDto(user);
     }
@@ -172,12 +174,12 @@ public class AuthServiceImpl implements AuthService {
     public void changePassword(String userId, ChangePasswordRequest request) {
         User user = userMapper.selectById(userId);
         if (user == null) {
-            throw new I18nException("error.user.not.found");
+            throw new ServiceException("error.user.not.found");
         }
         
         // 验证当前密码
         if (!passwordUtil.matches(request.getCurrentPassword(), user.getPasswordHash())) {
-            throw new I18nException("error.user.current.password.wrong");
+            throw new ServiceException("error.user.current.password.wrong");
         }
         
         // 加密新密码
@@ -188,6 +190,24 @@ public class AuthServiceImpl implements AuthService {
         logout(userId);
         
         log.info("User {} changed password successfully", userId);
+    }
+
+    @Override
+    @Transactional
+    public void forgotPassword(ForgotPasswordRequest request) {
+        // 校验验证码（校验成功即消费）
+        verificationCodeService.verifyEmailCodeOrThrow(request.getEmail(), "forgot_password", request.getCode());
+
+        User user = userMapper.findByEmail(request.getEmail());
+        if (user == null) {
+            throw new ServiceException("error.user.not.found");
+        }
+
+        user.setPasswordHash(passwordUtil.encode(request.getNewPassword()));
+        userMapper.updateById(user);
+
+        // 吊销所有刷新令牌（强制重新登录）
+        logout(user.getId());
     }
 
     /**
